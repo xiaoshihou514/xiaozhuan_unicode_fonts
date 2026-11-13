@@ -112,35 +112,19 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
     glyph_order = [".notdef"]
     glyphs_ttf, cs, cmap_glyph = {}, {}, {}
     metrics = {}
-    bad = n_scaled = 0
+    bad = 0
     for d, gname in uniq.items():
         try:
-            # 1) 精確墨跡輪廓（二次曲線精確界，非含控制點的包圍盒）
             bp = BoundsPen(None)
             SvgToPen(bp, scale).draw(d)
             if not bp.bounds:
                 raise ValueError("空輪廓")
-            x0, y0, x1, y1 = bp.bounds
-            w, h = x1 - x0, y1 - y0
-            # 2) 度量歸一：高度 96% 為主、寬 98% 封頂；水平居中 0.5em、
-            #    垂直放入 [baseline+BOT, baseline+TOP]；步進全角
-            s2 = min(INK_H * UPEM / h, INK_W * UPEM / w)
-            if abs(s2 - 1.0) > 0.01:
-                n_scaled += 1
-            tx = 0.5 * UPEM - w * s2 / 2 - x0 * s2
-            ty = TOP * UPEM - y1 * s2
-            M = (s2, 0, 0, s2, tx, ty)
-            # 3) TTF 輪廓（二次）與 CFF 輪廓（三次）共用同一變換
+            x0, _, x1, _ = bp.bounds
             ttpen = TTGlyphPen(None)
-            SvgToPen(Cu2QuPen(TransformPen(ttpen, M), MAX_ERR,
-                              reverse_direction=True), scale).draw(d)
+            SvgToPen(Cu2QuPen(ttpen, MAX_ERR, reverse_direction=True), scale).draw(d)
             glyphs_ttf[gname] = ttpen.glyph()
-            t2 = T2CharStringPen(UPEM, None)
-            SvgToPen(TransformPen(t2, M), scale).draw(d)
-            cs[gname] = t2.getCharString()
             glyph_order.append(gname)
-            lsb = int(round(x0 * s2 + tx))
-            metrics[gname] = (UPEM, lsb)
+            metrics[gname] = (int(round(x1 + 0.1 * UPEM)), int(round(x0)))
         except Exception as e:
             bad += 1
             if bad <= 3:
@@ -151,7 +135,6 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
     cs[".notdef"] = T2CharStringPen(UPEM, None).getCharString()
     metrics[".notdef"] = (UPEM, 0)
     cmap_glyph = {cp: g for cp, g in cp_glyph.items() if g in glyphs_ttf}
-    print(f"  歸一：縮放 {n_scaled} 字形，全角步進 {len(metrics)}", file=sys.stderr)
 
     # 三層 cmap：小篆區／隸定字／通行字（靜態映射表，自包含）
     cmap = {}
@@ -168,26 +151,110 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
     fam_en = f"Shuowen Seal {tag}"
     fam_zh = f"说文小篆-{zh}"
     ps = f"ShuowenSeal{tag}-Regular"
-    fb = FontBuilder(UPEM, isTTF=False)   # 交付物僅 CFF OTF
+
+    # ── 1) 先落盤編譯 TTF（粗縮放輪廓；歸一在編譯後進行，
+    #    未編譯的 glyf 對象上直接讀取會得到錯位的字形容器——歷史缺陷）
+    fb = FontBuilder(UPEM, isTTF=True)
     fb.setupGlyphOrder(glyph_order)
     fb.setupCharacterMap(cmap)
-    fb.setupCFF(ps, {"FullName": fam_en}, cs, {})
+    fb.setupGlyf(glyphs_ttf)
+    glyf_tbl = fb.font["glyf"]
+    for g in glyphs_ttf.values():
+        g.recalcBounds(glyf_tbl)
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=int(TOP * UPEM), descent=int(BOT * UPEM))
     fb.setupNameTable({"familyName": fam_en, "styleName": "Regular"})
     fb.setupOS2(sTypoAscender=int(TOP * UPEM), sTypoDescender=int(BOT * UPEM),
                 usWinAscent=int(TOP * UPEM), usWinDescent=int(-BOT * UPEM))
     fb.setupPost()
+    tmp_ttf = ROOT / f".build-{tag}.ttf"
+    fb.save(tmp_ttf)
+
+    # ── 2) 重載編譯後的字體做輪廓疊加化（union）
+    from fontTools.ttLib.removeOverlaps import removeOverlaps
+    from fontTools.pens.boundsPen import BoundsPen as _BP
+    ttf = TTFont(str(tmp_ttf))
+    # ── 2) 编译后度量归一（两段式；在已编译字形上按精确墨迹轮廓定位，
+    #    含控制点的存储 bbox 不可作为依据）。归一后编译重载，再叠加化。
+    gs = ttf.getGlyphSet()
+    glyf = ttf["glyf"]
+    hmtx = ttf["hmtx"]
+    n_scaled = 0
+    for name in glyph_order:
+        gobj = glyf[name]
+        if getattr(gobj, "numberOfContours", 0) == 0:
+            hmtx[name] = (UPEM, hmtx[name][1])
+            continue
+        bpn = _BP(gs)
+        gs[name].draw(bpn)
+        if not bpn.bounds:
+            continue
+        rx0, ry0, rx1, ry1 = bpn.bounds
+        w, h = rx1 - rx0, ry1 - ry0
+        if w <= 0 or h <= 0:
+            continue
+        s2 = min(INK_H * UPEM / h, INK_W * UPEM / w)
+        if abs(s2 - 1.0) > 0.01:
+            n_scaled += 1
+        tx = 0.5 * UPEM - w * s2 / 2 - rx0 * s2
+        ty = TOP * UPEM - ry1 * s2
+        npen = TTGlyphPen(gs)
+        tpen = TransformPen(npen, (s2, 0, 0, s2, tx, ty))
+        gs[name].draw(tpen)
+        glyf[name] = npen.glyph()
+        glyf[name].recalcBounds(glyf)
+        hmtx[name] = (UPEM, glyf[name].xMin)
+    print(f"  歸一：縮放 {n_scaled} 字形，全角步進 {len(glyph_order)}", file=sys.stderr)
+    tmp2 = ROOT / f".norm-{tag}.ttf"
+    ttf.save(str(tmp2))
+    ttf = TTFont(str(tmp2))
+
+    # ── 3) 輪廓疊加化（union）
+    removeOverlaps(ttf)
+
+    # ── 3) 逐字自檢：疊加化後精確墨跡中心應仍在 0.5em（閾值 2% em），
+    #    失敗即構建缺陷，直接報錯定位（不允許帶病交付）。
+    gs = ttf.getGlyphSet()
+    n_off = 0
+    for name in glyph_order[1:]:
+        bpc = _BP(gs)
+        gs[name].draw(bpc)
+        if bpc.bounds:
+            off = ((bpc.bounds[0] + bpc.bounds[2]) / 2 - UPEM / 2) / UPEM
+            if abs(off) > 0.02:
+                n_off += 1
+                if n_off <= 5:
+                    print(f"  [自檢] {name} 中心偏 {off:+.1%}em", file=sys.stderr)
+    if n_off:
+        sys.exit(f"{fam_zh}: {n_off} 字形居中超阈，拒绝交付")
+
+    # ── 4) CFF：從疊加化後的 TTF 輪廓轉三次（兩式幾何一致）
+    cs = {}
+    for name in glyph_order:
+        t2 = T2CharStringPen(UPEM, None)
+        gs[name].draw(t2)
+        cs[name] = t2.getCharString()
+
     # name 表：中英雙份家族名＋中文法定聲明（PostScript 名按規範保 ASCII）
     for lang in (0x409, 0x804):
-        fb.font["name"].setName(fam_zh if lang == 0x804 else fam_en, 1, 3, 1, lang)
-        fb.font["name"].setName("Regular" if lang == 0x409 else "常规", 2, 3, 1, lang)
-        fb.font["name"].setName(fam_zh if lang == 0x804 else fam_en, 4, 3, 1, lang)
-        fb.font["name"].setName(ps, 6, 3, 1, lang)
-    fb.font["name"].setName("字形提取自 Unicode 18.0 碼表 U3D000.pdf，僅供研究使用", 13, 3, 1, 0x409)
-    fb.font["OS/2"].fsType = 0
+        ttf["name"].setName(fam_zh if lang == 0x804 else fam_en, 1, 3, 1, lang)
+        ttf["name"].setName("Regular" if lang == 0x409 else "常规", 2, 3, 1, lang)
+        ttf["name"].setName(fam_zh if lang == 0x804 else fam_en, 4, 3, 1, lang)
+        ttf["name"].setName(ps, 6, 3, 1, lang)
+    ttf["name"].setName("字形提取自 Unicode 18.0 碼表 U3D000.pdf，僅供研究使用", 13, 3, 1, 0x409)
+    ttf["OS/2"].fsType = 0
+
+    # ── 5) 交付物僅 CFF OTF：複用 cmap／度量／name，輪廓為疊加化後的三次曲線
     out = ROOT / f"{fam_zh}.otf"
-    fb.save(out)
+    fb2 = FontBuilder(UPEM, isTTF=False)
+    fb2.setupGlyphOrder(glyph_order)
+    fb2.setupCharacterMap(cmap)
+    fb2.setupCFF(ps, {"FullName": fam_en}, cs, {})
+    fb2.setupHorizontalMetrics({n: ttf["hmtx"][n] for n in glyph_order})
+    for tag_ in ("hhea", "OS/2", "name", "post"):
+        fb2.font[tag_] = ttf[tag_]
+    fb2.save(out)
+    tmp_ttf.unlink()
     print(f"  {out.name}: {len(glyphs_ttf)} 字形, cmap {len(cmap)} 條", file=sys.stderr)
 
 

@@ -34,7 +34,7 @@ def check(fn: str) -> int:
             bad.append((gn, off))
     status = "通过" if not bad else f"超阈 {len(bad)} 个（最大 {max(abs(o) for _, o in bad):.2%}em）"
     print(f"{fn}: 检测 {n} 字形 → {status}")
-    for gn, off in sorted(bad, key=lambda t: -abs(t[2]))[:12]:
+    for gn, off in sorted(bad, key=lambda t: -abs(t[1]))[:12]:
         print(f"  {gn}: {off:+.2%}em")
     return 1 if bad else 0
 
