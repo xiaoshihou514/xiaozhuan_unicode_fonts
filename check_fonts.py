@@ -60,7 +60,8 @@ def glyph_area(gs, gn):
     return abs(a / 2)
 
 
-def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
+def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
+               golden_missing=frozenset()):
     f = TTFont(fn, recalcBBoxes=False)
     upem = f["head"].unitsPerEm
     gs = f.getGlyphSet()
@@ -143,7 +144,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
                     gaps.add(int(cp, 16))
 
     # Q4：黃金映射表
-    for ch, want_cp in golden.items():
+    for ch, (want_cp, want_kai) in golden.items():
         gn = cmap.get(ord(ch))
         if gn is None:
             # 分款回退或分款缺口（顯式豁免，Q6）
@@ -167,11 +168,16 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
             if line.strip():
                 ch, cp, *_ = line.split("\t")
                 whitelist[ch] = int(cp, 16)
+    # 未收回退字断言：cmap 必须无该码位（缺字方框可见化）
+    for ch in golden_missing:
+        if ord(ch) in cmap:
+            fail(f"[{tag}] Q4 「{ch}」应未收回退，但 cmap 有映射")
+
     # Q4 為精確碼位匹配（寬縱會掩蓋短碼位差錯映——desktop-lead 複核發現）；
     # 例外：① 白名單顯式豁免；② 分款回退字（核對回退確實生效後通過）
     by_fam = fallbacks.get("by_fam", {})
     fam_fb_codes = {code for (fb_fam, code) in by_fam if fb_fam == fam_key}
-    for ch, want_cp in golden.items():
+    for ch, (want_cp, want_kai) in golden.items():
         if ch in whitelist:
             continue
         code = ord(ch)
@@ -185,7 +191,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
         if code in cmap and want_cp not in rev.get(cmap[code], set()):
             actual = rev.get(cmap[code], set())
             fail(f"[{tag}] Q4 「{ch}」映射為 {sorted(hex(a) for a in actual)}，"
-                 f"期望精確碼位 U+{want_cp:X}")
+                 f"期望精確碼位 {want_cp:#x}")
 
     # Q6：分款回退生效（按款匹配，回退表逐行声明款别）
     for (fb_fam, code), cp in fallbacks.get("by_fam", {}).items():
@@ -269,9 +275,17 @@ def main():
                       "data", "黄金映射.tsv")
     if os.path.exists(gp):
         for line in open(gp, encoding="utf-8").read().splitlines()[1:]:
-            if line.strip():
-                ch, cp, *_ = line.split("\t")
-                golden[ch] = int(cp, 16)
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            ch = parts[0]
+            if len(parts) >= 2 and parts[1].strip():
+                golden[ch] = (int(parts[1], 16), parts[2] if len(parts) > 2 else "")
+            else:
+                golden[ch] = (None, "")   # 未收回退字：無需斷言
+    # 未收回退字（expect 为空）：断言 cmap 中「必须未映射」（方框可见化）
+    golden_missing = {ch for ch, v in golden.items() if v[0] is None}
+    golden = {ch: v for ch, v in golden.items() if v[0] is not None}
 
     fallbacks = {"codes": set(), "by_fam": {}}
     fp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -292,7 +306,8 @@ def main():
                 head, cp = line.split("\t")
                 swpos[head] = int(cp)
     for fn in files:
-        check_font(fn, version, baseline_counts, golden, fallbacks, swpos)
+        check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
+                   golden_missing)
 
     if failures:
         print(f"\n門禁失敗 {len(failures)} 項：", file=sys.stderr)

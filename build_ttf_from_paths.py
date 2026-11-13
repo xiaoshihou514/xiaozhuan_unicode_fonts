@@ -191,9 +191,12 @@ def build_family(fam, info, paths, mcjk_groups, sw_pos, modern, fallbacks):
             contours = contours_of(d, scale)
             if not contours:
                 raise ValueError("空輪廓")
-            # 碎屑剔除（M4/G6）：面積過小的游離外輪廓
-            kept = [c for c in contours if abs(contour_area(c)) >= DEBRIS_AREA
-                    or contour_area(c) < 0]
+            # 碎屑剔除（M4/G6）：源路徑 y 翻轉後外輪廓為負方向——
+            # 「負且面積小於閾值」即游離黑碎屑，刪除；小的正面積輪廓
+            # 是設計鏤空白孔，保留（v0.1.3 曾把條件寫反，誤刪 3,380 個白孔）
+            kept = [c for c in contours
+                    if not (contour_area(c) < 0
+                            and abs(contour_area(c)) < DEBRIS_AREA)]
             if not kept:
                 kept = contours
             # 精確墨跡包圍盒（剔碎屑後）
@@ -327,8 +330,9 @@ def build_family(fam, info, paths, mcjk_groups, sw_pos, modern, fallbacks):
     name.setName(lic_en, 13, 3, 1, 0x409)
     fb.font["OS/2"].fsType = 0
     # head 版本與時間戳（Q10 可復現）
-    rev_major, rev_minor = VERSION.split(".")[:2]
-    fb.font["head"].fontRevision = (int(rev_major) << 16) + (int(rev_minor) << 4)
+    # fontRevision 與 name 版本一致化（audit 復驗 3.3：舊寫法得 16.0）
+    major, minor = VERSION.split(".")[:2]
+    fb.font["head"].fontRevision = float(f"{major}.{int(minor)}")
     if epoch:
         dt = datetime.fromtimestamp(int(epoch), tz=timezone.utc)
         for tbl_attr in ("created", "modified"):
