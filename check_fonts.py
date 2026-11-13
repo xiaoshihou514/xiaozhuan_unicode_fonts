@@ -66,6 +66,8 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
     gs = f.getGlyphSet()
     cmap = f.getBestCmap()
     tag = f["name"].getDebugName(6) or fn
+    fam_key = {"CCZ": "ccz", "QJZ": "qjz", "DYC": "dyc", "THX": "thx"}.get(
+        (f["name"].getDebugName(6) or "").split("ShuowenSeal")[-1].split("-")[0])
 
     # Q1：cmap 全量有墨跡；.notdef 有輪廓
     # （.notdef 方框豁免墨跡窗口/字面區檢查——它是刻意的符號）
@@ -165,20 +167,27 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos):
             if line.strip():
                 ch, cp, *_ = line.split("\t")
                 whitelist[ch] = int(cp, 16)
+    # Q4 為精確碼位匹配（寬縱會掩蓋短碼位差錯映——desktop-lead 複核發現）；
+    # 例外：① 白名單顯式豁免；② 分款回退字（核對回退確實生效後通過）
+    by_fam = fallbacks.get("by_fam", {})
+    fam_fb_codes = {code for (fb_fam, code) in by_fam if fb_fam == fam_key}
     for ch, want_cp in golden.items():
         if ch in whitelist:
             continue
-        if ord(ch) in cmap and want_cp not in rev.get(cmap[ord(ch)], set()):
-            actual = rev.get(cmap[ord(ch)], set())
-            same_shape = any(abs(a - want_cp) < 0x400 and
-                             (a >> 16) == (want_cp >> 16) for a in actual)
-            if not same_shape:
-                fail(f"[{tag}] Q4 「{ch}」字形與期望碼位 U+{want_cp:X} 不符 "
-                     f"（實際 {sorted(hex(a) for a in actual)}）")
+        code = ord(ch)
+        if code in fam_fb_codes:
+            fb_cp = by_fam[(fam_key, code)]
+            gn_code, gn_fb = cmap.get(code), cmap.get(fb_cp)
+            if gn_code is not None and gn_fb is not None and gn_code == gn_fb:
+                continue
+            fail(f"[{tag}] Q4 分款回退未生效：「{ch}」應經 U+{fb_cp:X} 借形")
+            continue
+        if code in cmap and want_cp not in rev.get(cmap[code], set()):
+            actual = rev.get(cmap[code], set())
+            fail(f"[{tag}] Q4 「{ch}」映射為 {sorted(hex(a) for a in actual)}，"
+                 f"期望精確碼位 U+{want_cp:X}")
 
     # Q6：分款回退生效（按款匹配，回退表逐行声明款别）
-    fam_key = {"CCZ": "ccz", "QJZ": "qjz", "DYC": "dyc", "THX": "thx"}.get(
-        (f["name"].getDebugName(6) or "").split("ShuowenSeal")[-1].split("-")[0])
     for (fb_fam, code), cp in fallbacks.get("by_fam", {}).items():
         if fb_fam != fam_key:
             continue
