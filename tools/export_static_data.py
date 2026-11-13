@@ -50,8 +50,11 @@ def main() -> int:
         w = csv.writer(f, delimiter="\t")
         w.writerow(["head", "seal_cp"])
         n = 0
+        # 已核对的登记噪声修正（desktop-lead 复核发现）：sw_pos「瘉」原登记
+        # 3E5F4，该位字形实为圓系；查表链正形為 3E5B4（瘉部字頭）
+        corrections = {"瘉": 0x3E5B4}
         for head, cp in con.execute("SELECT head, seal_cp FROM sw_pos"):
-            w.writerow([head, cp])
+            w.writerow([head, corrections.get(head, cp)])
             n += 1
     print(f"sw_pos.tsv: {n} 行")
 
