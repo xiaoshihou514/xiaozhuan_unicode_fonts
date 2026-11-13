@@ -143,6 +143,12 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
             cmap.setdefault(code, g)
     fb.setupCharacterMap(cmap)
     fb.setupGlyf(glyphs)
+    # 显式重算 glyf 存储 bbox（含控制点包围盒，TrueType 规范行为）：
+    # TTGlyphPen 产物边界缓存缺失，FontBuilder 保存也不补算。
+    # 注意该包围盒含控制点、可大于视觉墨迹——下游视觉居中勿以此为据。
+    glyf_tbl = fb.font["glyf"]
+    for g in glyphs.values():
+        g.recalcBounds(glyf_tbl)
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=1900, descent=-450)
     fb.setupNameTable({"familyName": fam_en, "styleName": "Regular"})

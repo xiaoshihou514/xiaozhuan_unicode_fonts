@@ -61,6 +61,7 @@ def fix_ttf(path: Path) -> None:
     target_h = INK_H * upem
     target_w = INK_W * upem
     n_scaled = n_full = 0
+    from fontTools.pens.boundsPen import BoundsPen
     for name in f.getGlyphOrder():
         g = glyf[name]
         if getattr(g, "numberOfContours", 0) == 0:
@@ -68,8 +69,18 @@ def fix_ttf(path: Path) -> None:
             hmtx[name] = (upem, hmtx[name][1])
             n_full += 1
             continue
-        h = g.yMax - g.yMin
-        w = g.xMax - g.xMin
+        # 用真实轮廓 bbox 归位：存储 bbox 可能为陈旧缓存（历史缺陷——
+        # SVG 管线中间 TTF 存储边界与真实轮廓不符，居中公式因此跑偏）
+        bp = BoundsPen(glyph_set)
+        try:
+            glyph_set[name].draw(bp)
+        except Exception:
+            continue
+        if not bp.bounds:
+            continue
+        rx0, ry0, rx1, ry1 = bp.bounds
+        h = ry1 - ry0
+        w = rx1 - rx0
         if h <= 0 or w <= 0:
             continue
         # 高度归一为主、宽度封顶（横扁字如「一」不撑爆步进）
@@ -78,8 +89,8 @@ def fix_ttf(path: Path) -> None:
             n_scaled += 1
         # 缩放后水平居中于 0.5em，垂直顶对齐 TOP、底随高度
         new_w = w * s
-        tx = 0.5 * upem - new_w / 2 - g.xMin * s
-        ty = TOP * upem - g.yMax * s
+        tx = 0.5 * upem - new_w / 2 - rx0 * s
+        ty = TOP * upem - ry1 * s
         pen = TTGlyphPen(glyph_set)
         tpen = TransformPen(pen, (s, 0, 0, s, tx, ty))
         glyph_set[name].draw(tpen)
@@ -120,10 +131,10 @@ def set_chinese_names(font, zh: str, ps: str) -> None:
 
 
 def main() -> int:
-    import build_fonts  # zhuan 项目：ttf_to_otf
+    import build_fonts  # 同目录：ttf_to_otf
 
     for slot in ZH_NAMES:
-        src = ZHAN / f"shuowen-seal-{slot}.ttf"
+        src = FONTS / f"shuowen-seal-{slot}.ttf"
         if not src.exists():
             print(f"  跳过缺失的 {src.name}")
             continue
@@ -133,7 +144,7 @@ def main() -> int:
         from fontTools.ttLib import TTFont as _F
         font = _F(str(otf))
         set_chinese_names(font, ZH_NAMES[slot], PS_NAMES[slot])
-        dest = ZHAN / f"{ZH_NAMES[slot]}.otf"
+        dest = FONTS / f"{ZH_NAMES[slot]}.otf"
         font.save(str(dest))
         font.close()
         src.unlink()   # 中间 TTF 不交付
