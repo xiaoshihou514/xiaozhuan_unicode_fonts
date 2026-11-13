@@ -35,92 +35,14 @@ from fontpaths import find_pdf, load_seal_sources   # noqa: E402
 PDF = find_pdf()
 OUTDIR = ROOT / "build_svg"
 UPEM = 2048
-PAGES = range(1, 190)          # 1 基：碼表頁
+PAGES = None                   # 全量；build_fonts_svg 打开 PDF 后按 doc.page_count 取
 
 FAMS = ("thx", "ccz", "qjz", "dyc")
 
-TOKEN_RE = re.compile(r"^(TH|C|K|D)-(\d{4,6})$")
+TOKEN_RE = re.compile(r"^(TH|C|K|D)-([XY]?\d{3,6})$")
 FAM_OF_PREFIX = {"TH": "thx", "C": "ccz", "K": "qjz", "D": "dyc"}
 
 PATH_CMD_RE = re.compile(r"([MmLlCcZzHhVv])\s*((?:-?[\d.]+(?:[, ]\s*-?[\d.]+)*)*)")
-
-
-# ---------- SVG path → 輪廓點 ----------
-
-def svg_path_to_segments(d):
-    """把 pdftocairo 的 path d 解析為 (命令, 絕對坐標點列) 序列。"""
-    segs = []
-    for cmd, argstr in PATH_CMD_RE.findall(d):
-        vals = [float(v) for v in re.findall(r"-?[\d.]+", argstr)]
-        segs.append((cmd, vals))
-    return segs
-
-
-class SvgPen:
-    """把 SVG path（y 向下、基線 y=0）畫到 fontTools pen（y 向上）。"""
-
-    def __init__(self, out_pen, scale):
-        self.pen = out_pen
-        self.s = scale
-
-    def _pt(self, x, y):
-        return (x * self.s, -y * self.s)
-
-    def draw(self, d):
-        pen = self.pen
-        segs = svg_path_to_segments(d)
-        cur = None
-        start = None
-        for cmd, v in segs:
-            c = cmd.upper()
-            if c == "M":
-                if cur is not None:
-                    pen.closePath()
-                cur = self._pt(v[0], v[1])
-                start = cur
-                pen.moveTo(cur)
-                rest = v[2:]
-                for i in range(0, len(rest), 2):
-                    cur = self._pt(rest[i], rest[i + 1])
-                    pen.lineTo(cur)
-            elif c == "L":
-                for i in range(0, len(v), 2):
-                    cur = self._pt(v[i], v[i + 1])
-                    pen.lineTo(cur)
-            elif c == "C":
-                for i in range(0, len(v), 6):
-                    p1 = self._pt(v[i], v[i + 1])
-                    p2 = self._pt(v[i + 2], v[i + 3])
-                    p3 = self._pt(v[i + 4], v[i + 5])
-                    pen.curveTo(p1, p2, p3)
-                    cur = p3
-            elif c == "H":
-                for x in v:
-                    cur = self._pt(x, cur[1] / self.s if cur else 0)
-                    pen.lineTo(cur)
-            elif c == "V":
-                for y in v:
-                    cur = self._pt(cur[0] / self.s if cur else 0, y)
-                    pen.lineTo(cur)
-            elif c == "Z":
-                if cur is not None:
-                    pen.closePath()
-                    cur = start
-        if cur is not None:
-            pen.closePath()
-
-
-def path_bbox(d):
-    xs, ys = [], []
-    for cmd, v in svg_path_to_segments(d):
-        c = cmd.upper()
-        if c in ("M", "L"):
-            xs += v[0::2]; ys += v[1::2]
-        elif c == "C":
-            xs += v[0::2]; ys += v[1::2]
-    if not xs:
-        return None
-    return min(xs), min(ys), max(xs), max(ys)
 
 
 # ---------- 每頁處理 ----------
@@ -134,6 +56,8 @@ def page_svg(pno):
 
 
 def parse_svg(svg):
+    if "fill-rule" in svg and "evenodd" in svg:
+        raise SystemExit("頁面 SVG 含 evenodd 填充規則，解析語義會變，請先確認 poppler 輸出")
     defs = dict(re.findall(r'<g id="(glyph-[\d-]+)">\s*<path d="([^"]+)"/>', svg))
     uses = [(m[0], float(m[1]), float(m[2]))
             for m in re.findall(r'<use xlink:href="#(glyph-[\d-]+)" x="([\d.]+)" y="([\d.]+)"/>', svg)]
@@ -149,7 +73,7 @@ def source_labels(page):
     return out
 
 
-def process_page(pno, fam_map, con, sink):
+def process_page(pno, fam_map):
     """處理一頁：返回 {family: {seal_cp: path_d}}。"""
     page = doc[pno - 1]
     tokens = source_labels(page)
@@ -201,7 +125,11 @@ def process_page(pno, fam_map, con, sink):
 # ---------- 主流程 ----------
 
 def main():
-    pages = PAGES
+    fam_map, _ = load_seal_sources()
+
+    global doc
+    doc = pymupdf.open(PDF)
+    pages = range(1, doc.page_count + 1)   # S1：页数取自 PDF，不写死
     if len(sys.argv) > 1:
         if "-" in sys.argv[1]:
             a, b = sys.argv[1].split("-")
@@ -209,22 +137,39 @@ def main():
         else:
             pages = [int(sys.argv[1])]
 
-    fam_map, _ = load_seal_sources()
-
-    global doc
-    doc = pymupdf.open(PDF)
-
     OUTDIR.mkdir(exist_ok=True)
     all_paths = defaultdict(dict)
     for pno in pages:
-        got = process_page(pno, fam_map, None, None)
+        got = process_page(pno, fam_map)
         for fam, m in got.items():
             all_paths[fam].update(m)
-        (OUTDIR / f"paths_p{pno if isinstance(pno, int) else pno}.json").unlink(missing_ok=True)
 
     out = {fam: {str(cp): d for cp, d in all_paths.get(fam, {}).items()} for fam in FAMS}
-    tag = f"{pages[0]}-{pages[-1]}" if len(pages) > 1 else str(pages[0])
-    (OUTDIR / f"paths_{tag}.json").write_text(json.dumps(out))
+
+    # S5：提取完整性门禁——每款提取数必须等于映射表编号数
+    ok = True
+    for fam in FAMS:
+        want = set(fam_map[fam].values())
+        got = set(all_paths.get(fam, {}))
+        missing = sorted(want - got)
+        extra = sorted(got - want)
+        print(f"{fam}: 应提 {len(want)}，实提 {len(got)}，缺 {len(missing)}，多 {len(extra)}",
+              file=sys.stderr)
+        if missing:
+            ok = False
+            preview = ", ".join(f"U+{c:X}" for c in missing[:20])
+            print(f"  缺失码位示例: {preview}{' ...' if len(missing) > 20 else ''}",
+                  file=sys.stderr)
+        if extra:
+            ok = False
+            print(f"  多余码位: {[hex(c) for c in extra[:10]]}", file=sys.stderr)
+    if not ok:
+        sys.exit("提取完整性门禁未通过（Q2）：存在漏提/多提，拒绝产出 paths 数据")
+
+    # M8：全量运行只写固定文件名，并清理其它 paths_*.json
+    for old in OUTDIR.glob("paths_*.json"):
+        old.unlink()
+    (OUTDIR / "paths_all.json").write_text(json.dumps(out))
     for fam in FAMS:
         print(f"{fam}: {len(out[fam])} 字形 path", file=sys.stderr)
 

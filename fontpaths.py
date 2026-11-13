@@ -1,14 +1,13 @@
 """数据源定位与静态映射表加载（本仓库自包含，不依赖 zhuan）。
 
-外部数据只有 U3D000.pdf（约 40MB，不入 git，放本仓库根目录）：
-  https://www.unicode.org/Public/UCD/latest/ucd/Unihan.zip 之外，
-  码表 PDF 从 Unicode 18.0 发布页获取（见 README「构建前置条件」）。
+外部数据只有 U3D000.pdf（约 40MB，不入 git，放本仓库根目录），
+从 Unicode 18.0 发布页 CodeCharts 获取（见 README「构建前置条件」）。
 
-静态映射表在 data/（由 zhuan/seal.db 一次性导出，提交进 git）：
+静态映射表在 data/（由 zhuan/seal.db 经 tools/export_static_data.py
+导出，提交进 git；再生成方法见 docs/agent.md「靜態映射數據」一节）：
   - seal_sources.tsv：seal_cp, mcjk_cp, thx, ccz, qjz, dyc
-    （码表 PDF 内 TH/C/K/D 编号反查码位；隸定字码位供第二层 cmap）
-    再生成方法：见 docs/agent.md「静态映射数据」一节。
-  - modern_map.tsv：code, seal_cp（通行字→小篆码位，查表链产物）
+  - modern_map.tsv：code, seal_cp（通行字→小篆码位）
+  - sw_pos.tsv：head, seal_cp（說文字头对位）
 """
 from pathlib import Path
 import csv
@@ -49,3 +48,11 @@ def load_seal_sources():
 def load_modern_map():
     """通行字 → 小篆码位。"""
     return {int(r["code"]): int(r["seal_cp"]) for r in load_tsv("modern_map.tsv")}
+
+
+def load_sw_pos():
+    """說文字头对位表：{字: 碼位}（data/sw_pos.tsv）。"""
+    out = {}
+    for row in load_tsv("sw_pos.tsv"):
+        out[row["head"]] = int(row["seal_cp"])
+    return out

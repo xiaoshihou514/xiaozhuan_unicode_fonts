@@ -26,7 +26,46 @@ U3D000.pdf（Unicode 18.0 码表，约 40MB，不入 git，放仓库根目录）
 pymupdf texttrace 的 GID 几何配对，但 GID 与 PDF 渲染层字形编号语义不同且
 非线性，曾致 cmap 指错字形（如「篆」→「匭」），已被 SVG 管线取代删除。
 
-## 四、Release 发布流程
+## 二、构建前置条件与命令
+
+| 依赖 | 位置 | 说明 |
+|---|---|---|
+| uv | 命令行 | https://docs.astral.sh/uv/ |
+| just（可选） | 命令行 | https://github.com/casey/just#packages |
+| `U3D000.pdf` | 本仓库根目录 | Unicode 18.0 码表（约 40MB，不入 git） |
+| poppler-utils | 系统 | 提供 pdftocairo |
+
+```bash
+uv sync        # 依赖按 uv.lock 锁定安装（fontTools、pymupdf、skia-pathops）
+just otf       # 一键全流程：提取 → 四款中文名 OTF → 门禁
+just check     # 仅跑门禁
+just release   # 门禁＋工作区清洁检查＋sha256 清单
+```
+
+## 三、靜態映射數據（data/）
+
+| 文件 | 內容 | 維護方式 |
+|---|---|---|
+| `seal_sources.tsv` | seal_cp, mcjk_cp, TH/C/K/D 編號 | 導出腳本 |
+| `modern_map.tsv` | code, seal_cp（通行字→小篆碼位） | 導出腳本 |
+| `sw_pos.tsv` | head, seal_cp（說文字頭對位） | 導出腳本 |
+| `隸定重码清单.tsv` | 94 個重碼字（「裁定」列待人工確認） | 手工 |
+| `黄金映射.tsv` | 常用字→應得碼位（門禁 Q4 回歸基線） | 手工維護 |
+| `分款回退.tsv` | 分款借形（dyc「上」→U+3D006，段注篆作「丄」） | 手工維護 |
+| `分款缺口.tsv` | 官方數據缺口豁免（dyc 無「下」） | 手工維護 |
+| `映射白名单.tsv` | 通行字映射顯式豁免（舌→U+3D660） | 手工維護 |
+
+再生成（需 zhuan 環境）：
+
+```bash
+cd ../zhuan && .venv/bin/python ../fonts/tools/export_static_data.py
+```
+
+查表鏈修復說明（G1 根因）：zhuan 查表鏈優先級已改為「人工校訂別名 →
+隸定本字（重碼時字頭碼位優先）→ 說文字頭對位 → 變體鏈（已剔除
+`sw_gw` 古文從屬邊）→ OpenCC → 借聲符」。
+
+## 五、Release 发布流程
 
 1. 本地构建＋`check_centering.py` 全过；
 2. `git commit`（管线改动）；
@@ -38,7 +77,7 @@ pymupdf texttrace 的 GID 几何配对，但 GID 与 PDF 渲染层字形编号�
 
 当前版本：[v0.1.1](https://github.com/xiaoshihou514/xiaozhuan_unicode_fonts/releases/tag/v0.1.1)。
 
-## 五、数据源与许可
+## 六、数据源与许可
 
 - 字形：Unicode 18.0 码表 U3D000.pdf 参考字形，按
   [Unicode 授权条款](https://www.unicode.org/license.txt)使用，**仅供研究**，
@@ -49,20 +88,25 @@ pymupdf texttrace 的 GID 几何配对，但 GID 与 PDF 渲染层字形编号�
   转录（zhuan/sw_download.py 抓取）；
 - 脚本代码：[MIT](../LICENSE)。
 
-## 六、已知坑（后来者必读）
+## 七、已知坑（后来者必读）
 
 1. **glyf 存储 bbox 含二次曲线控制点**（TrueType 规范行为），可远超视觉
-   墨迹——任何"视觉居中/度量"一律以 BoundsPen 精确轮廓为准，勿信存储
-   bbox（历史缺陷：陈昌治本曾因此 521 字形跑偏最大 26.2% em，2026-11 修复）；
-2. texttrace GID 与 PDF 渲染层字形编号语义不同且非线性——不要用 GID
+   墨迹——视觉居中/度量一律以 BoundsPen 精确轮廓为准（task-17 陈昌治本
+   521 字形跑偏最大 26.2% em 的根因）；
+2. **R1 起不回读已构建字形**：glyf 对象经 glyphSet 读取存在数据错位
+   陷阱（task-17 时代 233 字形偏移的诱因）；
+3. **pathops 输入必须取整**：浮点自交路径直接 simplify 会触发 skia
+   丢区域缺陷（0x3FBB3/0x3DB8F 上半部丢失，v0.1.2 落地时实证）；
+   pathops 输出为单段二次曲线，经 Qu2CuPen(all_cubic=True) 转三次；
+4. texttrace GID 与 PDF 渲染层字形编号语义不同且非线性——不要用 GID
    互索引两个层面（SVG 管线存在的理由）；
-3. GitHub 附件名清洗非 ASCII 字符；
-4. `U3D000.pdf` 带版本号的 zipped 下载路径多已 404，用
+5. GitHub 附件名清洗非 ASCII 字符；
+6. `U3D000.pdf` 带版本号的 zipped 下载路径多已 404，用
    `Public/UCD/latest/ucd/` 路径；
-5. zhuan 查表链构建须 `Unihan_Variants.txt` 在项目内且为真数据（404
+7. zhuan 查表链构建须 `Unihan_Variants.txt` 在项目内且为真数据（404
    HTML 残骸会导致缺表，build_db.py 已改为报错——保持该约束）。
 
-## 七、协作约定
+## 八、协作约定
 
 - 本仓库（fonts）写作用域归字体组；`../zhuan`（查表链／seal.db）与
   `../langya`（输入法插件）改动分别归各自负责人，交叉改动先打招呼；
