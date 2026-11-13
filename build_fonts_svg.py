@@ -18,7 +18,7 @@ glyf，但兩者的字形編號語義並不對應（同一視覺字形在 pdf �
 import io
 import json
 import re
-import sqlite3
+
 import subprocess
 import sys
 from collections import defaultdict
@@ -31,9 +31,8 @@ from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 ROOT = Path(__file__).parent
-from fontpaths import find_pdf, find_seal_db   # noqa: E402
+from fontpaths import find_pdf, load_seal_sources   # noqa: E402
 PDF = find_pdf()
-DB = find_seal_db()
 OUTDIR = ROOT / "build_svg"
 UPEM = 2048
 PAGES = range(1, 190)          # 1 基：碼表頁
@@ -210,12 +209,7 @@ def main():
         else:
             pages = [int(sys.argv[1])]
 
-    con = sqlite3.connect(DB)
-    # 編號 → 碼位（每家）
-    fam_map = {}
-    for fam in FAMS:
-        rows = con.execute(f"SELECT {fam}, seal_cp FROM seal_char WHERE {fam} IS NOT NULL")
-        fam_map[fam] = dict(rows)
+    fam_map, _ = load_seal_sources()
 
     global doc
     doc = pymupdf.open(PDF)
@@ -223,7 +217,7 @@ def main():
     OUTDIR.mkdir(exist_ok=True)
     all_paths = defaultdict(dict)
     for pno in pages:
-        got = process_page(pno, fam_map, con, None)
+        got = process_page(pno, fam_map, None, None)
         for fam, m in got.items():
             all_paths[fam].update(m)
         (OUTDIR / f"paths_p{pno if isinstance(pno, int) else pno}.json").unlink(missing_ok=True)

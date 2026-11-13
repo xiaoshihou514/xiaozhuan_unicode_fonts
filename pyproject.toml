@@ -1,0 +1,16 @@
+[project]
+name = "xiaozhuan-unicode-fonts"
+version = "0.1.0"
+description = "說文解字小篆四家字形复现管线（Unicode 18.0 U+3D000–3FC3F，仅供研究）"
+requires-python = ">=3.10"
+dependencies = [
+    "fonttools>=4.55",
+    "pymupdf>=1.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = false

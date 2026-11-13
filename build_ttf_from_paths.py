@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
-"""從 build_fonts_svg.py 產出的矢量 path 構建四款說文小篆字體（TTF+OTF）。"""
+"""從 build_fonts_svg.py 產出的矢量 path 構建四款說文小篆字體（交付用中文名 OTF）。
+
+本步驟自包含：靜態映射表（data/）供第二、三層 cmap，度量歸一直接在
+建字階段完成（精確墨跡輪廓定位，含控制點的存儲 bbox 不可作依據）。
+"""
 import json
 import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-from fontTools.ttLib import TTFont, newTable
+from fontTools.ttLib import TTFont
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.t2CharStringPen import T2CharStringPen
+from fontTools.pens.transformPen import TransformPen
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.boundsPen import BoundsPen
 
 ROOT = Path(__file__).parent
 OUTDIR = ROOT / "build_svg"
-from fontpaths import find_seal_db   # noqa: E402
-DB = find_seal_db()
+from fontpaths import load_seal_sources, load_modern_map   # noqa: E402
+
 UPEM = 2048
 MAX_ERR = 1.0
+# 度量歸一常量（視覺居中以精確墨跡輪廓為準）
+INK_H = 0.96   # 目標墨跡高度 / em
+INK_W = 0.98   # 目標墨跡寬度上限 / em
+TOP = 0.86     # 墨跡頂 / em（baseline 之上）
+BOT = -0.10    # 墨跡底 / em
 
 FAMS = {
     "thx": dict(tag="THX", zh="藤花树本"),
@@ -100,37 +110,50 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
         cp_glyph[cp] = uniq[d]
 
     glyph_order = [".notdef"]
-    glyphs, metrics, cmap_glyph = {}, {}, {}
-    bad = 0
+    glyphs_ttf, cs, cmap_glyph = {}, {}, {}
+    metrics = {}
+    bad = n_scaled = 0
     for d, gname in uniq.items():
         try:
-            ttpen = TTGlyphPen(None)
-            SvgToPen(Cu2QuPen(ttpen, MAX_ERR, reverse_direction=True), scale).draw(d)
-            g = ttpen.glyph()
+            # 1) 精確墨跡輪廓（二次曲線精確界，非含控制點的包圍盒）
             bp = BoundsPen(None)
             SvgToPen(bp, scale).draw(d)
-            if bp.bounds:
-                x0, _, x1, _ = bp.bounds
-            else:
+            if not bp.bounds:
                 raise ValueError("空輪廓")
-            glyphs[gname] = g
+            x0, y0, x1, y1 = bp.bounds
+            w, h = x1 - x0, y1 - y0
+            # 2) 度量歸一：高度 96% 為主、寬 98% 封頂；水平居中 0.5em、
+            #    垂直放入 [baseline+BOT, baseline+TOP]；步進全角
+            s2 = min(INK_H * UPEM / h, INK_W * UPEM / w)
+            if abs(s2 - 1.0) > 0.01:
+                n_scaled += 1
+            tx = 0.5 * UPEM - w * s2 / 2 - x0 * s2
+            ty = TOP * UPEM - y1 * s2
+            M = (s2, 0, 0, s2, tx, ty)
+            # 3) TTF 輪廓（二次）與 CFF 輪廓（三次）共用同一變換
+            ttpen = TTGlyphPen(None)
+            SvgToPen(Cu2QuPen(TransformPen(ttpen, M), MAX_ERR,
+                              reverse_direction=True), scale).draw(d)
+            glyphs_ttf[gname] = ttpen.glyph()
+            t2 = T2CharStringPen(UPEM, None)
+            SvgToPen(TransformPen(t2, M), scale).draw(d)
+            cs[gname] = t2.getCharString()
             glyph_order.append(gname)
-            adv = int(round(x1 + 0.1 * UPEM))
-            metrics[gname] = (adv, int(round(x0)))
+            lsb = int(round(x0 * s2 + tx))
+            metrics[gname] = (UPEM, lsb)
         except Exception as e:
             bad += 1
             if bad <= 3:
                 print(f"  跳過壞字形 {gname}: {e}", file=sys.stderr)
     if bad:
         print(f"  共跳過 {bad} 個壞字形", file=sys.stderr)
-    glyphs[".notdef"] = TTGlyphPen(None).glyph()
-    metrics[".notdef"] = (UPEM // 2, 0)
-    cmap_glyph = {cp: g for cp, g in cp_glyph.items() if g in glyphs}
+    glyphs_ttf[".notdef"] = TTGlyphPen(None).glyph()
+    cs[".notdef"] = T2CharStringPen(UPEM, None).getCharString()
+    metrics[".notdef"] = (UPEM, 0)
+    cmap_glyph = {cp: g for cp, g in cp_glyph.items() if g in glyphs_ttf}
+    print(f"  歸一：縮放 {n_scaled} 字形，全角步進 {len(metrics)}", file=sys.stderr)
 
-    fb = FontBuilder(UPEM, isTTF=True)
-    fam_en = f"Shuowen Seal {tag}"
-    fam_zh = f"说文小篆-{zh}"
-    fb.setupGlyphOrder(glyph_order)
+    # 三層 cmap：小篆區／隸定字／通行字（靜態映射表，自包含）
     cmap = {}
     for cp, g in cmap_glyph.items():
         cmap[cp] = g
@@ -141,85 +164,46 @@ def build_family(fam, info, paths, mcjk_of, modern_map):
         g = cmap_glyph.get(cp)
         if g:
             cmap.setdefault(code, g)
+
+    fam_en = f"Shuowen Seal {tag}"
+    fam_zh = f"说文小篆-{zh}"
+    ps = f"ShuowenSeal{tag}-Regular"
+    fb = FontBuilder(UPEM, isTTF=False)   # 交付物僅 CFF OTF
+    fb.setupGlyphOrder(glyph_order)
     fb.setupCharacterMap(cmap)
-    fb.setupGlyf(glyphs)
-    # 显式重算 glyf 存储 bbox（含控制点包围盒，TrueType 规范行为）：
-    # TTGlyphPen 产物边界缓存缺失，FontBuilder 保存也不补算。
-    # 注意该包围盒含控制点、可大于视觉墨迹——下游视觉居中勿以此为据。
-    glyf_tbl = fb.font["glyf"]
-    for g in glyphs.values():
-        g.recalcBounds(glyf_tbl)
+    fb.setupCFF(ps, {"FullName": fam_en}, cs, {})
     fb.setupHorizontalMetrics(metrics)
-    fb.setupHorizontalHeader(ascent=1900, descent=-450)
+    fb.setupHorizontalHeader(ascent=int(TOP * UPEM), descent=int(BOT * UPEM))
     fb.setupNameTable({"familyName": fam_en, "styleName": "Regular"})
-    fb.setupOS2(sTypoAscender=1900, sTypoDescender=-450, usWinAscent=1900, usWinDescent=450)
+    fb.setupOS2(sTypoAscender=int(TOP * UPEM), sTypoDescender=int(BOT * UPEM),
+                usWinAscent=int(TOP * UPEM), usWinDescent=int(-BOT * UPEM))
     fb.setupPost()
-    fb.font["name"].setName(fam_zh, 1, 3, 1, 0x804)
-    fb.font["name"].setName(fam_zh, 4, 3, 1, 0x804)
+    # name 表：中英雙份家族名＋中文法定聲明（PostScript 名按規範保 ASCII）
+    for lang in (0x409, 0x804):
+        fb.font["name"].setName(fam_zh if lang == 0x804 else fam_en, 1, 3, 1, lang)
+        fb.font["name"].setName("Regular" if lang == 0x409 else "常规", 2, 3, 1, lang)
+        fb.font["name"].setName(fam_zh if lang == 0x804 else fam_en, 4, 3, 1, lang)
+        fb.font["name"].setName(ps, 6, 3, 1, lang)
     fb.font["name"].setName("字形提取自 Unicode 18.0 碼表 U3D000.pdf，僅供研究使用", 13, 3, 1, 0x409)
     fb.font["OS/2"].fsType = 0
-    out_ttf = ROOT / f"shuowen-seal-{tag}.ttf"
-    fb.save(out_ttf)
-    print(f"  {out_ttf.name}: {len(glyphs)} 字形, cmap {len(cmap)} 條 (scale={scale:.1f})", file=sys.stderr)
-
-    # OTF：T2CharStringPen 原生三次（僅用成功字形）
-    cs = {".notdef": T2CharStringPen(UPEM, None).getCharString()}
-    metrics2 = {".notdef": metrics[".notdef"]}
-    for d, gname in uniq.items():
-        if gname not in glyphs:
-            continue
-        t2 = T2CharStringPen(UPEM, None)
-        SvgToPen(t2, scale).draw(d)
-        cs[gname] = t2.getCharString()
-        metrics2[gname] = metrics[gname]
-    fb2 = FontBuilder(UPEM, isTTF=False)
-    fb2.setupGlyphOrder(glyph_order)
-    fb2.setupCharacterMap(cmap)
-    fb2.setupCFF(f"ShuowenSeal{tag}-Regular", {"FullName": fam_en}, cs, {})
-    fb2.setupHorizontalMetrics(metrics2)
-    fb2.setupHorizontalHeader(ascent=1900, descent=-450)
-    fb2.setupNameTable({"familyName": fam_en, "styleName": "Regular"})
-    fb2.setupOS2(sTypoAscender=1900, sTypoDescender=-450, usWinAscent=1900, usWinDescent=450)
-    fb2.setupPost()
-    fb2.font["name"].setName(fam_zh, 1, 3, 1, 0x804)
-    fb2.font["name"].setName(fam_zh, 4, 3, 1, 0x804)
-    fb2.font["OS/2"].fsType = 0
-    out_otf = ROOT / f"shuowen-seal-{tag}.otf"
-    fb2.save(out_otf)
-    print(f"  {out_otf.name} 完成", file=sys.stderr)
+    out = ROOT / f"{fam_zh}.otf"
+    fb.save(out)
+    print(f"  {out.name}: {len(glyphs_ttf)} 字形, cmap {len(cmap)} 條", file=sys.stderr)
 
 
 def main():
     import glob
     files = sorted(glob.glob(str(OUTDIR / "paths_*.json")))
-    assert files, "缺少 paths json"
+    assert files, "缺少 paths json（先運行 build_fonts_svg.py）"
     all_paths = defaultdict(dict)
     for fn in files:
         d = json.loads(Path(fn).read_text())
         for fam, m in d.items():
             all_paths[fam].update(m)
 
-    import sqlite3
-    con = sqlite3.connect(DB)
-    mcjk_of = dict(con.execute("SELECT seal_cp, mcjk_char FROM seal_char WHERE mcjk_char IS NOT NULL"))
-
-    # 通行字層：完整查詢鏈（依賴旁邊 zhuan/ 查表庫；不可用時降級只出前兩層）
-    try:
-        sys.path.insert(0, str(ROOT.parent / "zhuan"))
-        from zhuan import ZhuanConverter
-        cv = ZhuanConverter()
-        modern = {}
-        for code in range(0x3400, 0xA000):
-            ch = chr(code)
-            m = cv.lookup(ch)
-            if m is not None:
-                modern[code] = m.seal_cp
-        print(f"通行字層 {len(modern)}", file=sys.stderr)
-    except ImportError:
-        print("警告：找不到 zhuan 查表鏈，跳過通行字層"
-              "（第三層 cmap 需要旁邊有 zhuan/ 目錄，或 pip 安裝 zhuan 包）",
-              file=sys.stderr)
-        modern = {}
+    seal_map, mcjk_of = load_seal_sources()
+    modern = load_modern_map()
+    print(f"通行字層 {len(modern)}（data/modern_map.tsv）", file=sys.stderr)
 
     for fam, info in FAMS.items():
         build_family(fam, info, all_paths.get(fam, {}), mcjk_of, modern)

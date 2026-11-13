@@ -12,3 +12,4 @@ paths_*.json
 __pycache__/
 .venv/
 .uv-cache/
+.uv-cache/
