@@ -143,12 +143,23 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
                 if fam == fam_key_gap:
                     gaps.add(int(cp, 16))
 
-    # Q4：黃金映射表
+    # Q4：黃金映射表（分款缺形豁免集在此計算）
+    fam_missing = set()
+    gp3 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "data", "分款缺形.tsv")
+    if os.path.exists(gp3):
+        for line in open(gp3, encoding="utf-8").read().splitlines()[1:]:
+            if line.strip():
+                fam, cp, *_ = line.split("\t")
+                if fam == fam_key:
+                    fam_missing.add(int(cp, 16))
     for ch, (want_cp, want_kai) in golden.items():
         gn = cmap.get(ord(ch))
         if gn is None:
-            # 分款回退或分款缺口（顯式豁免，Q6）
+            # 分款回退或分款缺形（顯式豁免，Q6）
             if ch in fallbacks.get("codes", set()):
+                continue
+            if want_cp in fam_missing:
                 continue
             want_pos = swpos.get(ch)
             if want_pos is not None and want_pos in gaps:
@@ -172,6 +183,16 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
     for ch in golden_missing:
         if ord(ch) in cmap:
             fail(f"[{tag}] Q4 「{ch}」应未收回退，但 cmap 有映射")
+    # 分款缺形豁免（Q6）：官方编号列缺失的小篆码位，该款 cmap 无字形合法
+    fam_missing = set()
+    gp3 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "data", "分款缺形.tsv")
+    if os.path.exists(gp3):
+        for line in open(gp3, encoding="utf-8").read().splitlines()[1:]:
+            if line.strip():
+                fam, cp, *_ = line.split("\t")
+                if fam == fam_key:
+                    fam_missing.add(int(cp, 16))
 
     # Q4 為精確碼位匹配（寬縱會掩蓋短碼位差錯映——desktop-lead 複核發現）；
     # 例外：① 白名單顯式豁免；② 分款回退字（核對回退確實生效後通過）
@@ -188,6 +209,8 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
                 continue
             fail(f"[{tag}] Q4 分款回退未生效：「{ch}」應經 U+{fb_cp:X} 借形")
             continue
+        if want_cp not in cmap and want_cp in fam_missing:
+            continue   # 分款缺形（官方数据缺口，Q6 豁免）
         if code in cmap and want_cp not in rev.get(cmap[code], set()):
             actual = rev.get(cmap[code], set())
             fail(f"[{tag}] Q4 「{ch}」映射為 {sorted(hex(a) for a in actual)}，"
