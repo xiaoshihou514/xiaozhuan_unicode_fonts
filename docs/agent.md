@@ -36,7 +36,7 @@ pymupdf texttrace 的 GID 几何配对，但 GID 与 PDF 渲染层字形编号�
 4. 附件直传若失败（曾遇 HTTP 404），改「先建 Release 后逐个 upload」；
 5. 同步把成品拷贝到 `../zhuan/`（宣发资产从 zhuan/ 读字体文件）。
 
-当前版本：[v0.1.0](https://github.com/xiaoshihou514/xiaozhuan_unicode_fonts/releases/tag/v0.1.0)。
+当前版本：[v0.1.1](https://github.com/xiaoshihou514/xiaozhuan_unicode_fonts/releases/tag/v0.1.1)。
 
 ## 五、数据源与许可
 
