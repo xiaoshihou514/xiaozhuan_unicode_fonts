@@ -1,7 +1,7 @@
 """数据源定位与静态映射表加载（本仓库自包含，不依赖 zhuan）。
 
 外部数据只有 U3D000.pdf（约 40MB，不入 git，放本仓库根目录），
-从 Unicode 18.0 发布页 CodeCharts 获取（见 README「构建前置条件」）。
+下载地址见 PDF_URL。
 
 静态映射表在 data/（由 zhuan/seal.db 经 tools/export_static_data.py
 导出，提交进 git；再生成方法见 docs/agent.md「靜態映射數據」一节）：
@@ -12,7 +12,17 @@
 from pathlib import Path
 import csv
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]   # 仓库根（src/<pkg>/paths.py）
+DATA = ROOT / "data"
+BUILD = ROOT / "build_svg"                    # 中间产物：逐页 SVG＋paths json
+DIST = ROOT / "dist"                          # 交付物：四款 OTF
+PDF_URL = "https://www.unicode.org/Public/18.0.0/charts/PDF/U3D000.pdf"
+
+
+def version() -> str:
+    """字体版本号，唯一来源为 pyproject.toml。"""
+    from importlib.metadata import version as v
+    return v("xiaozhuan-unicode-fonts")
 
 
 def find_pdf() -> Path:
@@ -20,12 +30,12 @@ def find_pdf() -> Path:
     if p.exists():
         return p
     raise SystemExit(
-        "缺 U3D000.pdf（约 40MB，不入 git）：请从 Unicode 18.0 码表发布页下载，"
-        f"放到 {ROOT}/U3D000.pdf（获取方式见 README）")
+        f"缺 U3D000.pdf（约 40MB，不入 git）：请下载 {PDF_URL}\n"
+        f"放到 {p}（或执行 just pdf）")
 
 
 def load_tsv(name: str):
-    with open(ROOT / "data" / name, encoding="utf-8", newline="") as f:
+    with open(DATA / name, encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f, delimiter="\t"))
 
 

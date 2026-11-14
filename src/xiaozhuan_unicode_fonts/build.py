@@ -24,9 +24,8 @@ from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.boundsPen import BoundsPen
 
-ROOT = Path(__file__).parent
-OUTDIR = ROOT / "build_svg"
-from fontpaths import load_seal_sources, load_modern_map, load_sw_pos   # noqa: E402
+from .paths import (BUILD as OUTDIR, DATA, DIST, load_modern_map,
+                    load_seal_sources, load_sw_pos, load_tsv, version)
 
 UPEM = 2048
 
@@ -38,7 +37,6 @@ BOT = -0.10    # 字面區底 / em
 ZONE_MID = (TOP + BOT) / 2          # 字面垂直中心（S3：無條件居中）
 DEBRIS_AREA = 0.0002 * UPEM * UPEM  # 碎屑面積閾值（M4/G6：0.02% em²）
 
-VERSION = os.environ.get("FONT_VERSION", "0.1.2")
 
 FAMS = {
     "thx": dict(tag="THX", zh="藤花树本"),
@@ -294,6 +292,7 @@ def build_family(fam, info, paths, mcjk_groups, sw_pos, modern, fallbacks):
 
     # 版本元數據（Q9/Q10）：SOURCE_DATE_EPOCH 可復現
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    VERSION = version()
     version_s = f"Version {VERSION}"
 
     fb = FontBuilder(UPEM, isTTF=False)
@@ -370,7 +369,8 @@ def build_family(fam, info, paths, mcjk_groups, sw_pos, modern, fallbacks):
     except Exception:
         pass
 
-    out = ROOT / f"{fam_zh}.otf"
+    DIST.mkdir(exist_ok=True)
+    out = DIST / f"{fam_zh}.otf"
     fb.save(out)
     print(f"  {out.name}: {len(glyph_order)} 字形, cmap {len(cmap)} 條", file=sys.stderr)
 
@@ -427,7 +427,7 @@ class _RoundPen:
 def main():
     files = sorted(glob.glob(str(OUTDIR / "paths_all.json"))) or \
         sorted(glob.glob(str(OUTDIR / "paths_*.json")))
-    assert files, "缺少 paths json（先運行 build_fonts_svg.py）"
+    assert files, "缺少 paths json（先運行 xiaozhuan-fonts extract）"
     all_paths = defaultdict(dict)
     for fn in files:
         d = json.loads(Path(fn).read_text())
@@ -447,7 +447,7 @@ def main():
 
     # 分款回退表（Q6）：data/分款回退.tsv —— fam, code, seal_cp, note
     fallbacks: dict[str, dict[int, int]] = defaultdict(dict)
-    fb_path = ROOT / "data" / "分款回退.tsv"
+    fb_path = DATA / "分款回退.tsv"
     if fb_path.exists():
         for line in fb_path.read_text(encoding="utf-8").splitlines()[1:]:
             if not line.strip():
@@ -462,7 +462,6 @@ def main():
 
 
 def load_tsv_rows(name):
-    from fontpaths import load_tsv
     return load_tsv(name)
 
 

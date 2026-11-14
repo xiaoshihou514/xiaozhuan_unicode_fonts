@@ -4,22 +4,24 @@
 
 ## 一、管线架构
 
-单一 SVG 管线（自包含，不依赖 zhuan 环境）：
+单一 SVG 管线（自包含，不依赖 zhuan 环境）。标准 uv 项目，代码在
+`src/xiaozhuan_unicode_fonts/`，入口 `xiaozhuan-fonts`（cli.py），版本号唯一来源
+为 `pyproject.toml`：
 
 ```
 U3D000.pdf（Unicode 18.0 码表，约 40MB，不入 git，放仓库根目录）
   │
-  ├─ build_fonts_svg.py       pdftocairo 逐页 SVG（poppler 渲染正确性已被位图管线长期验证）
+  ├─ extract.py   pdftocairo 逐页 SVG（poppler 渲染正确性已被位图管线长期验证）
   │     pymupdf 读 Arial 标注（TH/C/K/D-xxxxx，有 ToUnicode）定位每格四家正形，
   │     编号经 data/seal_sources.tsv 反查码位 → paths json 缓存（build_svg/）
   │
-  ├─ build_ttf_from_paths.py  建字＋度量归一＋交付
+  ├─ build.py     建字＋度量归一＋交付
   │     Cu2Qu 转二次建 TTF 轮廓、T2CharString 原生三次建 CFF（同一变换）；
   │     归一以精确墨迹轮廓（BoundsPen）定位：墨迹高 96% em、宽封顶 98%、
   │     水平居中 0.5em、垂直 [−0.10, +0.86] em、全角步进；
-  │     三层 cmap（小篆区／隸定字／通行字）→ 四款中文名 OTF（唯一交付物）
+  │     三层 cmap（小篆区／隸定字／通行字）→ dist/ 四款中文名 OTF（唯一交付物）
   │
-  └─ check_centering.py       水平居中回归检测（偏差 >2% em 失败退出）
+  └─ check.py     独立交付门禁 Q1–Q9（居中/映射/几何/度量，任一失败非零退出）
 ```
 
 歷史沿革：早期 texttrace 管线（原 build_fonts.py＋fix_font_metrics.py）用
@@ -32,14 +34,15 @@ pymupdf texttrace 的 GID 几何配对，但 GID 与 PDF 渲染层字形编号�
 |---|---|---|
 | uv | 命令行 | https://docs.astral.sh/uv/ |
 | just（可选） | 命令行 | https://github.com/casey/just#packages |
-| `U3D000.pdf` | 本仓库根目录 | Unicode 18.0 码表（约 40MB，不入 git） |
+| `U3D000.pdf` | 本仓库根目录 | [Unicode 18.0 码表](https://www.unicode.org/Public/18.0.0/charts/PDF/U3D000.pdf)（约 40MB，不入 git，`just pdf` 自动下载） |
 | poppler-utils | 系统 | 提供 pdftocairo |
 
 ```bash
-uv sync        # 依赖按 uv.lock 锁定安装（fontTools、pymupdf、skia-pathops）
-just otf       # 一键全流程：提取 → 四款中文名 OTF → 门禁
-just check     # 仅跑门禁
-just release   # 门禁＋工作区清洁检查＋sha256 清单
+just otf                       # 下载 PDF（如缺）→ 提取 → dist/ 四款 OTF → 门禁
+just check                     # 仅跑门禁
+just release                   # 门禁＋工作区清洁检查＋dist/sha256sums.txt
+uv run xiaozhuan-fonts         # 不用 just：全流程（extract/build/check 可单跑）
+uv run xiaozhuan-fonts extract 190   # 调试：只提取第 190 页
 ```
 
 ## 三、靜態映射數據（data/）
@@ -67,15 +70,15 @@ cd ../zhuan && .venv/bin/python ../fonts/tools/export_static_data.py
 
 ## 五、Release 发布流程
 
-1. 本地构建＋`check_centering.py` 全过；
+1. `pyproject.toml` 改版本号，`just otf` 全过；
 2. `git commit`（管线改动）；
 3. `gh release create v{X.Y.Z}` ＋上传四款 OTF。**注意**：GitHub 会把
    非 ASCII 附件名清洗成 ASCII（gh 与 curl 直传 UTF-8 名均复现），故
    附件名用 PostScript 名（ASCII），中文以附件 label 展示，正文补对应关系；
 4. 附件直传若失败（曾遇 HTTP 404），改「先建 Release 后逐个 upload」；
-5. 同步把成品拷贝到 `../zhuan/`（宣发资产从 zhuan/ 读字体文件）。
+5. 同步把 `dist/` 成品拷贝到 `../zhuan/`（宣发资产从 zhuan/ 读字体文件）。
 
-当前版本：[v0.1.1](https://github.com/xiaoshihou514/xiaozhuan_unicode_fonts/releases/tag/v0.1.1)。
+当前版本：[0.1.4](https://github.com/xiaoshihou514/xiaozhuan_unicode_fonts/releases/latest)。
 
 ## 六、数据源与许可
 

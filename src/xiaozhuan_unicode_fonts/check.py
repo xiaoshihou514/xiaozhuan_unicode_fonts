@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """字體交付門禁（審計 Q1–Q9）：與構建規則無關的獨立檢驗。
 
-用法：uv run check_fonts.py [--version v0.1.2] [字体.otf ...]
+用法：xiaozhuan-fonts check [--version 0.1.4] [字体.otf ...]（默认 dist/ 下四款、pyproject 版本）
 退出碼：全部通過 0；任何一項失敗 1。
 
 門禁項：
@@ -24,6 +24,8 @@ from glob import glob
 
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
+
+from .paths import BUILD, DIST, ROOT, version as pkg_version
 
 THRESH = 0.02
 ZONE_TOP, ZONE_BOT = 0.86, -0.10
@@ -132,7 +134,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
 
     # 分款缺口表（Q6 允許的顯式豁免）
     gaps = set()
-    gp2 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    gp2 = os.path.join(str(ROOT),
                        "data", "分款缺口.tsv")
     fam_key_gap = {"CCZ": "ccz", "QJZ": "qjz", "DYC": "dyc", "THX": "thx"}.get(
         (f["name"].getDebugName(6) or "").split("ShuowenSeal")[-1].split("-")[0])
@@ -145,7 +147,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
 
     # Q4：黃金映射表（分款缺形豁免集在此計算）
     fam_missing = set()
-    gp3 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    gp3 = os.path.join(str(ROOT),
                        "data", "分款缺形.tsv")
     if os.path.exists(gp3):
         for line in open(gp3, encoding="utf-8").read().splitlines()[1:]:
@@ -172,7 +174,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
     for cp, gn in cmap.items():
         rev.setdefault(gn, set()).add(cp)
     whitelist = {}
-    wp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    wp = os.path.join(str(ROOT),
                       "data", "映射白名单.tsv")
     if os.path.exists(wp):
         for line in open(wp, encoding="utf-8").read().splitlines()[1:]:
@@ -185,7 +187,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
             fail(f"[{tag}] Q4 「{ch}」应未收回退，但 cmap 有映射")
     # 分款缺形豁免（Q6）：官方编号列缺失的小篆码位，该款 cmap 无字形合法
     fam_missing = set()
-    gp3 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    gp3 = os.path.join(str(ROOT),
                        "data", "分款缺形.tsv")
     if os.path.exists(gp3):
         for line in open(gp3, encoding="utf-8").read().splitlines()[1:]:
@@ -225,7 +227,7 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
             fail(f"[{tag}] Q6 回退未生效：U+{code:X} 未指向 U+{cp:X} 的字形")
 
     # Q7：幾何保真（與源路徑對比面積/寬高比）
-    src_file = os.path.join(os.path.dirname(__file__), "build_svg", "paths_all.json")
+    src_file = str(BUILD / "paths_all.json")
     if os.path.exists(src_file):
         import json
         from collections import defaultdict
@@ -275,9 +277,9 @@ def check_font(fn, version, baseline_counts, golden, fallbacks, swpos,
     print(f"{fn}: cmap {len(cmap)}，門禁子項執行完畢（問題見匯總）")
 
 
-def main():
-    args = sys.argv[1:]
-    version = None
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    version = pkg_version()
     baseline_counts = None
     if "--version" in args:
         i = args.index("--version")
@@ -288,13 +290,13 @@ def main():
         i = args.index("--baseline")
         baseline_counts = json.load(open(args[i + 1]))
         del args[i:i + 2]
-    files = args or sorted(glob("说文小篆-*.otf"))
+    files = args or sorted(glob(str(DIST / "说文小篆-*.otf")))
     if not files:
         print("未找到 OTF", file=sys.stderr)
         return 2
 
     golden = {}
-    gp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    gp = os.path.join(str(ROOT),
                       "data", "黄金映射.tsv")
     if os.path.exists(gp):
         for line in open(gp, encoding="utf-8").read().splitlines()[1:]:
@@ -311,7 +313,7 @@ def main():
     golden = {ch: v for ch, v in golden.items() if v[0] is not None}
 
     fallbacks = {"codes": set(), "by_fam": {}}
-    fp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    fp = os.path.join(str(ROOT),
                       "data", "分款回退.tsv")
     if os.path.exists(fp):
         for line in open(fp, encoding="utf-8").read().splitlines()[1:]:
@@ -321,7 +323,7 @@ def main():
                 fallbacks["by_fam"][(fam, int(code, 16))] = int(cp, 16)
 
     swpos = {}
-    sp = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+    sp = os.path.join(str(ROOT),
                       "data", "sw_pos.tsv")
     if os.path.exists(sp):
         for line in open(sp, encoding="utf-8").read().splitlines()[1:]:

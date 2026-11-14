@@ -2,15 +2,9 @@
 *.otf
 *.ttf
 U3D000.pdf
-seal.db
-seal.db.tmp
 
-# 构建中间产物（可重建）
+# 构建产物（可重建）
 build_svg/
-fonts_ext/
-paths_*.json
+dist/
 __pycache__/
 .venv/
-.uv-cache/
-.uv-cache/
-字形检查-v0.1.1/

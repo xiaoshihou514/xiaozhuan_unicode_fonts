@@ -7,18 +7,16 @@
 
 [下载](../../releases)
 
-## 构建脚本
+## 构建
 
-[MIT](LICENSE)
-
-| 依赖 | 位置 | 获取方式 |
-|---|---|---|
-| `U3D000.pdf` | 本仓库根或项目根 | Unicode 18.0 码表（约 40MB，不入 git） |
-| Python 依赖 | — | `pymupdf`、`fonttools`（poppler-utils 提供 `pdftocairo`，SVG 管线用） |
-
+[MIT](LICENSE)。需 [uv](https://docs.astral.sh/uv/)、[just](https://github.com/casey/just)、poppler-utils（`pdftocairo`）。
 
 ```bash
-pdftocairo -svg ...
-python build_fonts_svg.py
-python build_ttf_from_paths.py
+just otf
+```
+
+会自动下载码表 [U3D000.pdf](https://www.unicode.org/Public/18.0.0/charts/PDF/U3D000.pdf)（约 40MB）， `dist/`为最终产物。不用 just 时，手动下载 PDF 后运行：
+
+```bash
+uv run xiaozhuan-fonts
 ```

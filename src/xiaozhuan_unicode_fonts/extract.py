@@ -30,10 +30,7 @@ from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-ROOT = Path(__file__).parent
-from fontpaths import find_pdf, load_seal_sources   # noqa: E402
-PDF = find_pdf()
-OUTDIR = ROOT / "build_svg"
+from .paths import BUILD as OUTDIR, find_pdf, load_seal_sources
 UPEM = 2048
 PAGES = None                   # 全量；build_fonts_svg 打开 PDF 后按 doc.page_count 取
 
@@ -51,7 +48,7 @@ def page_svg(pno):
     out = OUTDIR / f"p{pno}.svg"
     if not out.exists():
         subprocess.run(["pdftocairo", "-svg", "-f", str(pno), "-l", str(pno),
-                        str(PDF), str(out)], check=True, capture_output=True)
+                        str(find_pdf()), str(out)], check=True, capture_output=True)
     return out.read_text()
 
 
@@ -124,18 +121,19 @@ def process_page(pno, fam_map):
 
 # ---------- 主流程 ----------
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     fam_map, _ = load_seal_sources()
 
     global doc
-    doc = pymupdf.open(PDF)
+    doc = pymupdf.open(find_pdf())
     pages = range(1, doc.page_count + 1)   # S1：页数取自 PDF，不写死
-    if len(sys.argv) > 1:
-        if "-" in sys.argv[1]:
-            a, b = sys.argv[1].split("-")
+    if argv:
+        if "-" in argv[0]:
+            a, b = argv[0].split("-")
             pages = range(int(a), int(b) + 1)
         else:
-            pages = [int(sys.argv[1])]
+            pages = [int(argv[0])]
 
     OUTDIR.mkdir(exist_ok=True)
     all_paths = defaultdict(dict)
